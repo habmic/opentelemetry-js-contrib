@@ -134,7 +134,10 @@ describe('CassandraDriverInstrumentation', () => {
     instrumentation.setTracerProvider(provider);
 
     const cassandra = require('cassandra-driver');
-    const endpoint = testCassandraLocally ? '127.0.0.1' : 'cassandra';
+    const endpoint =
+      process.env.CASSANDRA_HOST ?? testCassandraLocally
+        ? '127.0.0.1'
+        : 'cassandra';
     client = new cassandra.Client({
       contactPoints: [endpoint],
       localDataCenter: 'datacenter1',
@@ -162,7 +165,7 @@ describe('CassandraDriverInstrumentation', () => {
 
   after(async function () {
     this.timeout(60000);
-    await client.shutdown();
+    await client?.shutdown?.();
     if (testCassandraLocally) {
       testUtils.cleanUpDocker('cassandra');
     }

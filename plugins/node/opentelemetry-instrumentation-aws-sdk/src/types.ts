@@ -15,7 +15,7 @@
  */
 import { Span } from '@opentelemetry/api';
 import { InstrumentationConfig } from '@opentelemetry/instrumentation';
-import type * as AWS from 'aws-sdk';
+import { SQS } from './aws-sdk.types';
 
 /**
  * These are normalized request and response, which are used by both sdk v2 and v3.
@@ -31,6 +31,7 @@ export interface NormalizedRequest {
 export interface NormalizedResponse {
   data: any;
   request: NormalizedRequest;
+  requestId: string;
 }
 
 export interface AwsSdkRequestHookInformation {
@@ -55,7 +56,7 @@ export interface AwsSdkResponseCustomAttributeFunction {
 }
 
 export interface AwsSdkSqsProcessHookInformation {
-  message: AWS.SQS.Message;
+  message: SQS.Message;
 }
 export interface AwsSdkSqsProcessCustomAttributeFunction {
   (span: Span, sqsProcessInfo: AwsSdkSqsProcessHookInformation): void;

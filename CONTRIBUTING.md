@@ -63,7 +63,6 @@ The `opentelemetry-js-contrib` project is written in TypeScript.
 
 - `npm install` to install dependencies.
 - `npm run compile` compiles the code, checking for type errors.
-- `npm run bootstrap` Bootstrap the packages in the current Lerna repo. Installs all of their dependencies and links any cross-dependencies.
 - `npm test` tests code the same way that our CI will test it.
 - `npm run lint:fix` lint (and maybe fix) any changes.
 
@@ -87,7 +86,7 @@ This repo is generally meant for hosting components that work with popular open-
 
 ### Adding a New Vendor Component
 
-Vendor components that are hosted in this repo will be versioned the same as all other contrib components, and released in lockstep with them under the `@opentelemetry` org in NPM.
+Vendor components that are hosted in this repo will be versioned the same as all other contrib components, and released in lockstep with them under the `@opentelemetry` org in npm.
 
 In exchange, vendor component contributors are expected to:
 

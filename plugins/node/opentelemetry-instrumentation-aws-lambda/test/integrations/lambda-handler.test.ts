@@ -626,6 +626,37 @@ describe('lambda handler', () => {
       assert.strictEqual(span.parentSpanId, sampledGenericSpanContext.spanId);
     });
 
+    it('prefers to extract baggage over sampled lambda context if "eventContextExtractor" is defined', async () => {
+      process.env[traceContextEnvironmentKey] = sampledAwsHeader;
+      const customExtractor = (event: any): OtelContext => {
+        return propagation.extract(
+          context.active(),
+          event.customContextCarrier
+        );
+      };
+
+      initializeHandler('lambda-test/async.handler_return_baggage', {
+        disableAwsContextPropagation: true,
+        eventContextExtractor: customExtractor,
+      });
+
+      const baggage = 'abcd=1234';
+      const customRemoteEvent = {
+        customContextCarrier: {
+          traceparent: sampledGenericSpan,
+          baggage,
+        },
+      };
+
+      const lambdaTestAsync = lambdaRequire('lambda-test/async');
+      const actual = await lambdaTestAsync.handler_return_baggage(
+        customRemoteEvent,
+        ctx
+      );
+
+      assert.strictEqual(actual, baggage);
+    });
+
     it('creates trace from ROOT_CONTEXT when "disableAwsContextPropagation" is true, eventContextExtractor is provided, and no custom context is found', async () => {
       process.env[traceContextEnvironmentKey] = sampledAwsHeader;
       const customExtractor = (event: any): OtelContext => {
@@ -655,6 +686,64 @@ describe('lambda handler', () => {
       const spans = memoryExporter.getFinishedSpans();
       const [span] = spans;
       assert.strictEqual(span.parentSpanId, undefined);
+    });
+
+    it('passes the lambda context object into the eventContextExtractor for scenarios where it is the otel context carrier', async () => {
+      process.env[traceContextEnvironmentKey] = sampledAwsHeader;
+      const customExtractor = (
+        event: any,
+        handlerContext: Context
+      ): OtelContext => {
+        const contextCarrier = handlerContext.clientContext?.Custom ?? {};
+        return propagation.extract(context.active(), contextCarrier);
+      };
+
+      initializeHandler('lambda-test/async.handler', {
+        disableAwsContextPropagation: true,
+        eventContextExtractor: customExtractor,
+      });
+
+      const otherEvent = {};
+      const ctxWithCustomData = {
+        functionName: 'my_function',
+        invokedFunctionArn: 'my_arn',
+        awsRequestId: 'aws_request_id',
+        clientContext: {
+          client: {
+            installationId: '',
+            appTitle: '',
+            appVersionName: '',
+            appVersionCode: '',
+            appPackageName: '',
+          },
+          Custom: {
+            traceparent: sampledGenericSpan,
+          },
+          env: {
+            platformVersion: '',
+            platform: '',
+            make: '',
+            model: '',
+            locale: '',
+          },
+        },
+      } as Context;
+
+      const result = await lambdaRequire('lambda-test/async').handler(
+        otherEvent,
+        ctxWithCustomData
+      );
+
+      assert.strictEqual(result, 'ok');
+      const spans = memoryExporter.getFinishedSpans();
+      const [span] = spans;
+      assert.strictEqual(spans.length, 1);
+      assertSpanSuccess(span);
+      assert.strictEqual(
+        span.spanContext().traceId,
+        sampledGenericSpanContext.traceId
+      );
+      assert.strictEqual(span.parentSpanId, sampledGenericSpanContext.spanId);
     });
   });
 

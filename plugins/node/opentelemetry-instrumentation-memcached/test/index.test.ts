@@ -25,7 +25,10 @@ import {
 import type * as Memcached from 'memcached';
 import * as assert from 'assert';
 import Instrumentation from '../src';
-import { SemanticAttributes } from '@opentelemetry/semantic-conventions';
+import {
+  DbSystemValues,
+  SemanticAttributes,
+} from '@opentelemetry/semantic-conventions';
 import * as util from 'util';
 
 const instrumentation = new Instrumentation();
@@ -37,7 +40,7 @@ const CONFIG = {
 };
 
 const DEFAULT_ATTRIBUTES = {
-  [SemanticAttributes.DB_SYSTEM]: Instrumentation.COMPONENT,
+  [SemanticAttributes.DB_SYSTEM]: DbSystemValues.MEMCACHED,
   [SemanticAttributes.NET_PEER_NAME]: CONFIG.host,
   [SemanticAttributes.NET_PEER_PORT]: CONFIG.port,
 };
@@ -277,7 +280,7 @@ const assertSpans = (actualSpans: any[], expectedSpans: any[]) => {
       assert.notStrictEqual(span, undefined);
       assert.notStrictEqual(expected, undefined);
       assertMatch(span.name, new RegExp(expected.op));
-      assertMatch(span.name, new RegExp(expected.key));
+      assertMatch(span.name, new RegExp('memcached'));
       assert.strictEqual(span.kind, SpanKind.CLIENT);
       assert.strictEqual(span.attributes['db.statement'], expected.statement);
       for (const attr in DEFAULT_ATTRIBUTES) {

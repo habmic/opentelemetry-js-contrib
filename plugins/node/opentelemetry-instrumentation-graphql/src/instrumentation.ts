@@ -24,7 +24,6 @@ import {
   safeExecuteInTheMiddle,
 } from '@opentelemetry/instrumentation';
 import type * as graphqlTypes from 'graphql';
-import { GraphQLFieldResolver } from 'graphql/type/definition';
 import { SpanNames } from './enum';
 import { AttributeNames } from './enums/AttributeNames';
 import { OTEL_GRAPHQL_DATA_SYMBOL } from './symbols';
@@ -164,7 +163,7 @@ export class GraphQLInstrumentation extends InstrumentationBase {
   }
 
   private _patchExecute(
-    defaultFieldResolved: GraphQLFieldResolver<any, any>
+    defaultFieldResolved: graphqlTypes.GraphQLFieldResolver<any, any>
   ): (original: executeType) => executeType {
     const instrumentation = this;
     return function execute(original) {
@@ -245,20 +244,24 @@ export class GraphQLInstrumentation extends InstrumentationBase {
     result?: PromiseOrValue<graphqlTypes.ExecutionResult>
   ) {
     const config = this._getConfig();
-    if (
-      typeof config.responseHook !== 'function' ||
-      result === undefined ||
-      err
-    ) {
+    if (result === undefined || err) {
       endSpan(span, err);
       return;
     }
 
     if (result.constructor.name === 'Promise') {
       (result as Promise<graphqlTypes.ExecutionResult>).then(resultData => {
+        if (typeof config.responseHook !== 'function') {
+          endSpan(span);
+          return;
+        }
         this._executeResponseHook(span, resultData);
       });
     } else {
+      if (typeof config.responseHook !== 'function') {
+        endSpan(span);
+        return;
+      }
       this._executeResponseHook(span, result as graphqlTypes.ExecutionResult);
     }
   }
@@ -304,8 +307,8 @@ export class GraphQLInstrumentation extends InstrumentationBase {
         schema: graphqlTypes.GraphQLSchema,
         documentAST: graphqlTypes.DocumentNode,
         rules?: ReadonlyArray<graphqlTypes.ValidationRule>,
-        typeInfo?: graphqlTypes.TypeInfo,
-        options?: { maxErrors?: number }
+        options?: { maxErrors?: number },
+        typeInfo?: graphqlTypes.TypeInfo
       ): ReadonlyArray<graphqlTypes.GraphQLError> {
         return instrumentation._validate(
           this,
@@ -370,8 +373,8 @@ export class GraphQLInstrumentation extends InstrumentationBase {
             schema,
             documentAST,
             rules,
-            typeInfo,
-            options
+            options,
+            typeInfo
           );
         },
         (err, errors) => {
@@ -398,10 +401,18 @@ export class GraphQLInstrumentation extends InstrumentationBase {
 
     const span = this.tracer.startSpan(SpanNames.EXECUTE, {});
     if (operation) {
-      const name = (operation as graphqlTypes.OperationDefinitionNode)
-        .operation;
-      if (name) {
-        span.setAttribute(AttributeNames.OPERATION, name);
+      const operationDefinition =
+        operation as graphqlTypes.OperationDefinitionNode;
+      span.setAttribute(
+        AttributeNames.OPERATION_TYPE,
+        operationDefinition.operation
+      );
+
+      if (operationDefinition.name) {
+        span.setAttribute(
+          AttributeNames.OPERATION_NAME,
+          operationDefinition.name.value
+        );
       }
     } else {
       let operationName = ' ';
@@ -412,7 +423,7 @@ export class GraphQLInstrumentation extends InstrumentationBase {
         '$operationName$',
         operationName
       );
-      span.setAttribute(AttributeNames.OPERATION, operationName);
+      span.setAttribute(AttributeNames.OPERATION_NAME, operationName);
     }
 
     if (processedArgs.document?.loc) {

@@ -22,29 +22,18 @@ import { getNodeAutoInstrumentations } from '../src';
 
 describe('utils', () => {
   describe('getNodeAutoInstrumentations', () => {
-    it('should load default instrumentations', () => {
+    it('should include all installed instrumentations', () => {
       const instrumentations = getNodeAutoInstrumentations();
-      const expectedInstrumentations = [
-        '@opentelemetry/instrumentation-dns',
-        '@opentelemetry/instrumentation-express',
-        '@opentelemetry/instrumentation-graphql',
-        '@opentelemetry/instrumentation-grpc',
-        '@opentelemetry/instrumentation-http',
-        '@opentelemetry/instrumentation-ioredis',
-        '@opentelemetry/instrumentation-koa',
-        '@opentelemetry/instrumentation-mongodb',
-        '@opentelemetry/instrumentation-mysql',
-        '@opentelemetry/instrumentation-pg',
-        '@opentelemetry/instrumentation-redis',
-      ];
-      assert.strictEqual(instrumentations.length, 11);
-      for (let i = 0, j = instrumentations.length; i < j; i++) {
-        assert.strictEqual(
-          instrumentations[i].instrumentationName,
-          expectedInstrumentations[i],
-          `Instrumentation ${expectedInstrumentations[i]}, not loaded`
-        );
-      }
+      const installedInstrumentations = Object.keys(
+        require('../package.json').dependencies
+      ).filter(depName => {
+        return depName.startsWith('@opentelemetry/instrumentation-');
+      });
+
+      assert.deepStrictEqual(
+        new Set(instrumentations.map(i => i.instrumentationName)),
+        new Set(installedInstrumentations)
+      );
     });
 
     it('should use user config', () => {

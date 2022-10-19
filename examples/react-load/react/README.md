@@ -29,7 +29,7 @@ npm run build
 npm start
 ```
 
-By default, the application runs on port 5000.
+By default, the application runs on port 3000.
 
 Open Zipkin page at <http://localhost:9411/zipkin/> - you should be able to see the spans in zipkin
 
@@ -39,7 +39,7 @@ Take note of the parent-child relationships.
 
 ### First load
 
-Upon loading, <http://localhost:5000> mounting spans will be exported
+Upon loading, <http://localhost:3000> mounting spans will be exported
 <p align="center"><img src="./images/mounting.png?raw=true"/></p>
 <p align="center"><img src="./images/zipkin-mounting.png?raw=true"/></p>
 
@@ -74,4 +74,4 @@ Apache 2.0 - See [LICENSE][license-url] for more information.
 
 [license-url]: https://github.com/open-telemetry/opentelemetry-js-contrib/blob/main/LICENSE
 [otel]: https://opentelemetry.io/
-[otel-node]: https://github.com/open-telemetry/opentelemetry-js/tree/main/packages/opentelemetry-node
+[otel-node]: https://github.com/open-telemetry/opentelemetry-js/tree/main/packages/opentelemetry-sdk-trace-node

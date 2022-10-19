@@ -1,5 +1,48 @@
 # Changelog
 
+## [0.32.0](https://github.com/open-telemetry/opentelemetry-js-contrib/compare/contrib-test-utils-v0.31.0...contrib-test-utils-v0.32.0) (2022-09-02)
+
+
+### Features
+
+* update experimental Otel deps to ^0.31.0 ([#1096](https://github.com/open-telemetry/opentelemetry-js-contrib/issues/1096)) ([4c8843b](https://github.com/open-telemetry/opentelemetry-js-contrib/commit/4c8843be14896d1159a622c07eb3a049401ccba1))
+* update experimental Otel deps to ^0.32.0 ([#1143](https://github.com/open-telemetry/opentelemetry-js-contrib/issues/1143)) ([6fb1911](https://github.com/open-telemetry/opentelemetry-js-contrib/commit/6fb191139aed2ca763300dcf9adb51121a88f97e))
+
+## [0.31.0](https://github.com/open-telemetry/opentelemetry-js-contrib/compare/contrib-test-utils-v0.30.0...contrib-test-utils-v0.31.0) (2022-06-08)
+
+
+### Features
+
+* update core dependencies stable ^1.3.1 experimental ^0.29.2 ([141b155](https://github.com/open-telemetry/opentelemetry-js-contrib/commit/141b155e344980b51264e26b26c117b2113bcef6))
+
+## [0.30.0](https://github.com/open-telemetry/opentelemetry-js-contrib/compare/contrib-test-utils-v0.29.0...contrib-test-utils-v0.30.0) (2022-05-14)
+
+
+### Features
+
+* add supported node versions for all packages ([#973](https://github.com/open-telemetry/opentelemetry-js-contrib/issues/973)) ([baaacbd](https://github.com/open-telemetry/opentelemetry-js-contrib/commit/baaacbdd35ca4baab0afae64647aa8c0380ee4b7))
+* use Otel SDK 1.2/0.28 ([#984](https://github.com/open-telemetry/opentelemetry-js-contrib/issues/984)) ([098c2ed](https://github.com/open-telemetry/opentelemetry-js-contrib/commit/098c2ed6f9c5ab7bd865685018c0777245aab3b7))
+
+## [0.29.0](https://www.github.com/open-telemetry/opentelemetry-js-contrib/compare/contrib-test-utils-v0.28.0...contrib-test-utils-v0.29.0) (2022-01-24)
+
+
+### Features
+
+* implement instrumentation for `tedious` ([#799](https://www.github.com/open-telemetry/opentelemetry-js-contrib/issues/799)) ([9326c99](https://www.github.com/open-telemetry/opentelemetry-js-contrib/commit/9326c99f3cdf3e0166f74093a8093066be78bd0a))
+* re-enable TAV ([#823](https://www.github.com/open-telemetry/opentelemetry-js-contrib/issues/823)) ([2e14f46](https://www.github.com/open-telemetry/opentelemetry-js-contrib/commit/2e14f46b3f7221ae51ffa12313997f007c300e21))
+
+
+### Bug Fixes
+
+* rename lerna's --include-filtered-dependencies option ([#817](https://www.github.com/open-telemetry/opentelemetry-js-contrib/issues/817)) ([cf268e7](https://www.github.com/open-telemetry/opentelemetry-js-contrib/commit/cf268e7a92b7800ad6dbec9ca77466f9ee03ee1a))
+
+## [0.28.0](https://www.github.com/open-telemetry/opentelemetry-js-contrib/compare/contrib-test-utils-v0.27.0...contrib-test-utils-v0.28.0) (2021-11-30)
+
+
+### Features
+
+* use latest instrumentation base ([#769](https://www.github.com/open-telemetry/opentelemetry-js-contrib/issues/769)) ([7aff23e](https://www.github.com/open-telemetry/opentelemetry-js-contrib/commit/7aff23ebebbe209fa3b78c2e7f513c9cd2231be4))
+
 ## [0.27.0](https://www.github.com/open-telemetry/opentelemetry-js-contrib/compare/contrib-test-utils-v0.26.0...contrib-test-utils-v0.27.0) (2021-10-22)
 
 

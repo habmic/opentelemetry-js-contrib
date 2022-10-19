@@ -31,6 +31,7 @@ import {
   SimpleSpanProcessor,
 } from '@opentelemetry/sdk-trace-base';
 import * as assert from 'assert';
+import * as sinon from 'sinon';
 import * as ioredisTypes from 'ioredis';
 import { IORedisInstrumentation } from '../src';
 import {
@@ -38,7 +39,11 @@ import {
   DbStatementSerializer,
   IORedisRequestHookInformation,
 } from '../src/types';
-import { SemanticAttributes } from '@opentelemetry/semantic-conventions';
+import {
+  DbSystemValues,
+  SemanticAttributes,
+} from '@opentelemetry/semantic-conventions';
+import { defaultDbStatementSerializer } from '../src/utils';
 
 const memoryExporter = new InMemorySpanExporter();
 
@@ -50,10 +55,10 @@ const CONFIG = {
 const URL = `redis://${CONFIG.host}:${CONFIG.port}`;
 
 const DEFAULT_ATTRIBUTES = {
-  [SemanticAttributes.DB_SYSTEM]: IORedisInstrumentation.DB_SYSTEM,
+  [SemanticAttributes.DB_SYSTEM]: DbSystemValues.REDIS,
   [SemanticAttributes.NET_PEER_NAME]: CONFIG.host,
   [SemanticAttributes.NET_PEER_PORT]: CONFIG.port,
-  [SemanticAttributes.NET_PEER_IP]: URL,
+  [SemanticAttributes.DB_CONNECTION_STRING]: URL,
 };
 
 const unsetStatus: SpanStatus = {
@@ -183,12 +188,14 @@ describe('ioredis', () => {
       description: string;
       name: string;
       args: Array<string>;
+      serializedArgs: Array<string>;
       method: (cb: ioredisTypes.CallbackFunction<unknown>) => unknown;
     }> = [
       {
         description: 'insert',
         name: 'hset',
         args: [hashKeyName, 'testField', 'testValue'],
+        serializedArgs: [hashKeyName, 'testField', '[1 other arguments]'],
         method: (cb: ioredisTypes.CallbackFunction<number>) =>
           client.hset(hashKeyName, 'testField', 'testValue', cb),
       },
@@ -196,6 +203,7 @@ describe('ioredis', () => {
         description: 'get',
         name: 'get',
         args: [testKeyName],
+        serializedArgs: [testKeyName],
         method: (cb: ioredisTypes.CallbackFunction<string | null>) =>
           client.get(testKeyName, cb),
       },
@@ -221,6 +229,7 @@ describe('ioredis', () => {
     afterEach(async () => {
       await client.del(hashKeyName);
       await client.del(testKeyName);
+      await client.del('response-hook-test');
       memoryExporter.reset();
     });
 
@@ -238,7 +247,7 @@ describe('ioredis', () => {
             ...DEFAULT_ATTRIBUTES,
             [SemanticAttributes.DB_STATEMENT]: `${
               command.name
-            } ${command.args.join(' ')}`,
+            } ${command.serializedArgs.join(' ')}`,
           };
           const span = provider
             .getTracer('ioredis-test')
@@ -268,7 +277,7 @@ describe('ioredis', () => {
       it('should create a child span for hset promise', async () => {
         const attributes = {
           ...DEFAULT_ATTRIBUTES,
-          [SemanticAttributes.DB_STATEMENT]: `hset ${hashKeyName} random random`,
+          [SemanticAttributes.DB_STATEMENT]: `hset ${hashKeyName} random [1 other arguments]`,
         };
         const span = provider.getTracer('ioredis-test').startSpan('test span');
         await context.with(trace.setSpan(context.active(), span), async () => {
@@ -330,11 +339,14 @@ describe('ioredis', () => {
       it('should create a child span for streamify scanning', done => {
         const attributes = {
           ...DEFAULT_ATTRIBUTES,
-          [SemanticAttributes.DB_STATEMENT]: 'scan 0',
+          [SemanticAttributes.DB_STATEMENT]: 'scan 0 MATCH test-* COUNT 1000',
         };
         const span = provider.getTracer('ioredis-test').startSpan('test span');
         context.with(trace.setSpan(context.active(), span), () => {
-          const stream = client.scanStream();
+          const stream = client.scanStream({
+            count: 1000,
+            match: 'test-*',
+          });
           stream
             .on('end', () => {
               assert.strictEqual(memoryExporter.getFinishedSpans().length, 1);
@@ -361,7 +373,7 @@ describe('ioredis', () => {
         });
       });
 
-      it('should create a child span for pubsub', async () => {
+      it.skip('should create a child span for pubsub', async () => {
         const span = provider.getTracer('ioredis-test').startSpan('test span');
         await context.with(trace.setSpan(context.active(), span), async () => {
           try {
@@ -458,7 +470,7 @@ describe('ioredis', () => {
       it('should create a child span for pipeline', done => {
         const attributes = {
           ...DEFAULT_ATTRIBUTES,
-          [SemanticAttributes.DB_STATEMENT]: 'set foo bar',
+          [SemanticAttributes.DB_STATEMENT]: 'set foo [1 other arguments]',
         };
 
         const span = provider.getTracer('ioredis-test').startSpan('test span');
@@ -628,16 +640,24 @@ describe('ioredis', () => {
         };
         instrumentation.setConfig(config);
       });
-      it('should not create child span', async () => {
+      it('should not create child span for query', async () => {
         await client.set(testKeyName, 'data');
         const result = await client.del(testKeyName);
         assert.strictEqual(result, 1);
         assert.strictEqual(memoryExporter.getFinishedSpans().length, 0);
       });
+
+      it('should not create child span for connect', async () => {
+        const lazyClient = new ioredis(URL, { lazyConnect: true });
+        await lazyClient.connect();
+        const spans = memoryExporter.getFinishedSpans();
+        await lazyClient.quit();
+        assert.strictEqual(spans.length, 0);
+      });
     });
 
     describe('Instrumentation with requireParentSpan', () => {
-      it('should instrument with requireParentSpan equal false', async () => {
+      it('should instrument queries with requireParentSpan equal false', async () => {
         const config: IORedisInstrumentationConfig = {
           requireParentSpan: false,
         };
@@ -646,23 +666,48 @@ describe('ioredis', () => {
         await client.set(testKeyName, 'data');
         const result = await client.del(testKeyName);
         assert.strictEqual(result, 1);
-
         const endedSpans = memoryExporter.getFinishedSpans();
-        assert.strictEqual(endedSpans.length, 2);
 
+        assert.strictEqual(endedSpans.length, 2);
         testUtils.assertSpan(
           endedSpans[0],
           SpanKind.CLIENT,
           {
             ...DEFAULT_ATTRIBUTES,
-            [SemanticAttributes.DB_STATEMENT]: `set ${testKeyName} data`,
+            [SemanticAttributes.DB_STATEMENT]: `set ${testKeyName} [1 other arguments]`,
           },
           [],
           unsetStatus
         );
       });
 
-      it('should not instrument with requireParentSpan equal true', async () => {
+      it.skip('should instrument connect with requireParentSpan equal false', async () => {
+        const config: IORedisInstrumentationConfig = {
+          requireParentSpan: false,
+        };
+        instrumentation.setConfig(config);
+
+        const lazyClient = new ioredis(URL, { lazyConnect: true });
+        await lazyClient.connect();
+        const endedSpans = memoryExporter.getFinishedSpans();
+        assert.strictEqual(endedSpans.length, 2);
+        assert.strictEqual(endedSpans[0].name, 'connect');
+        assert.strictEqual(endedSpans[1].name, 'info');
+
+        await lazyClient.quit();
+        testUtils.assertSpan(
+          endedSpans[0],
+          SpanKind.CLIENT,
+          {
+            ...DEFAULT_ATTRIBUTES,
+            [SemanticAttributes.DB_STATEMENT]: 'connect',
+          },
+          [],
+          unsetStatus
+        );
+      });
+
+      it('should not instrument queries with requireParentSpan equal true', async () => {
         const config: IORedisInstrumentationConfig = {
           requireParentSpan: true,
         };
@@ -673,6 +718,20 @@ describe('ioredis', () => {
         assert.strictEqual(result, 1);
 
         assert.strictEqual(memoryExporter.getFinishedSpans().length, 0);
+      });
+
+      it('should not instrument connect with requireParentSpan equal true', async () => {
+        const config: IORedisInstrumentationConfig = {
+          requireParentSpan: true,
+        };
+        instrumentation.setConfig(config);
+
+        const lazyClient = new ioredis(URL, { lazyConnect: true });
+        await lazyClient.connect();
+        const endedSpans = memoryExporter.getFinishedSpans();
+        assert.strictEqual(endedSpans.length, 0);
+
+        await lazyClient.quit();
       });
     });
 
@@ -771,26 +830,17 @@ describe('ioredis', () => {
       });
 
       it('should call requestHook when set in config', async () => {
-        const config: IORedisInstrumentationConfig = {
-          requestHook: (
-            span: Span,
-            requestInfo: IORedisRequestHookInformation
-          ) => {
-            assert.ok(
-              /\d{1,4}\.\d{1,4}\.\d{1,5}.*/.test(
-                requestInfo.moduleVersion as string
-              )
-            );
-            assert.strictEqual(requestInfo.cmdName, 'incr');
-            assert.deepStrictEqual(requestInfo.cmdArgs, ['request-hook-test']);
-
+        const requestHook = sinon.spy(
+          (span: Span, requestInfo: IORedisRequestHookInformation) => {
             span.setAttribute(
               'attribute key from request hook',
               'custom value from request hook'
             );
-          },
-        };
-        instrumentation.setConfig(config);
+          }
+        );
+        instrumentation.setConfig(<IORedisInstrumentationConfig>{
+          requestHook,
+        });
 
         const span = provider.getTracer('ioredis-test').startSpan('test span');
         await context.with(trace.setSpan(context.active(), span), async () => {
@@ -802,22 +852,31 @@ describe('ioredis', () => {
             'custom value from request hook'
           );
         });
+
+        sinon.assert.calledOnce(requestHook);
+        const [, requestInfo] = requestHook.firstCall.args;
+        assert.ok(
+          /\d{1,4}\.\d{1,4}\.\d{1,5}.*/.test(
+            requestInfo.moduleVersion as string
+          )
+        );
+        assert.strictEqual(requestInfo.cmdName, 'incr');
+        assert.deepStrictEqual(requestInfo.cmdArgs, ['request-hook-test']);
       });
 
       it('should ignore requestHook which throws exception', async () => {
-        const config: IORedisInstrumentationConfig = {
-          requestHook: (
-            span: Span,
-            _requestInfo: IORedisRequestHookInformation
-          ) => {
+        const requestHook = sinon.spy(
+          (span: Span, _requestInfo: IORedisRequestHookInformation) => {
             span.setAttribute(
               'attribute key BEFORE exception',
               'this attribute is added to span BEFORE exception is thrown thus we can expect it'
             );
             throw Error('error thrown in requestHook');
-          },
-        };
-        instrumentation.setConfig(config);
+          }
+        );
+        instrumentation.setConfig(<IORedisInstrumentationConfig>{
+          requestHook,
+        });
 
         const span = provider.getTracer('ioredis-test').startSpan('test span');
         await context.with(trace.setSpan(context.active(), span), async () => {
@@ -829,30 +888,31 @@ describe('ioredis', () => {
             'this attribute is added to span BEFORE exception is thrown thus we can expect it'
           );
         });
+
+        sinon.assert.threw(requestHook);
       });
 
       it('should call responseHook when set in config', async () => {
-        const config: IORedisInstrumentationConfig = {
-          responseHook: (
+        const responseHook = sinon.spy(
+          (
             span: Span,
             cmdName: string,
             _cmdArgs: Array<string | Buffer | number>,
             response: unknown
           ) => {
-            assert.strictEqual(cmdName, 'incr');
-            // the command is 'incr' on a key which does not exist, thus it increase 0 by 1 and respond 1
-            assert.strictEqual(response, 1);
             span.setAttribute(
               'attribute key from hook',
               'custom value from hook'
             );
-          },
-        };
-        instrumentation.setConfig(config);
+          }
+        );
+        instrumentation.setConfig(<IORedisInstrumentationConfig>{
+          responseHook,
+        });
 
         const span = provider.getTracer('ioredis-test').startSpan('test span');
         await context.with(trace.setSpan(context.active(), span), async () => {
-          await client.incr('response-hook-test');
+          await client.set('response-hook-test', 'test-value');
           const endedSpans = memoryExporter.getFinishedSpans();
           assert.strictEqual(endedSpans.length, 1);
           assert.strictEqual(
@@ -860,20 +920,32 @@ describe('ioredis', () => {
             'custom value from hook'
           );
         });
+
+        sinon.assert.calledOnce(responseHook);
+        const [, cmdName, , response] = responseHook.firstCall.args as [
+          Span,
+          string,
+          unknown,
+          Buffer
+        ];
+        assert.strictEqual(cmdName, 'set');
+        assert.strictEqual(response.toString(), 'OK');
       });
 
       it('should ignore responseHook which throws exception', async () => {
-        const config: IORedisInstrumentationConfig = {
-          responseHook: (
+        const responseHook = sinon.spy(
+          (
             _span: Span,
             _cmdName: string,
             _cmdArgs: Array<string | Buffer | number>,
             _response: unknown
           ) => {
             throw Error('error thrown in responseHook');
-          },
-        };
-        instrumentation.setConfig(config);
+          }
+        );
+        instrumentation.setConfig(<IORedisInstrumentationConfig>{
+          responseHook,
+        });
 
         const span = provider.getTracer('ioredis-test').startSpan('test span');
         await context.with(trace.setSpan(context.active(), span), async () => {
@@ -883,6 +955,8 @@ describe('ioredis', () => {
           // hook throw exception, but span should not be affected
           assert.strictEqual(endedSpans.length, 1);
         });
+
+        sinon.assert.threw(responseHook);
       });
     });
 
@@ -925,6 +999,43 @@ describe('ioredis', () => {
             });
           });
         });
+      });
+    });
+  });
+
+  describe('#defaultDbStatementSerializer()', () => {
+    [
+      {
+        cmdName: 'UNKNOWN',
+        cmdArgs: ['something'],
+        expected: 'UNKNOWN [1 other arguments]',
+      },
+      {
+        cmdName: 'ECHO',
+        cmdArgs: ['echo'],
+        expected: 'ECHO [1 other arguments]',
+      },
+      {
+        cmdName: 'LPUSH',
+        cmdArgs: ['list', 'value'],
+        expected: 'LPUSH list [1 other arguments]',
+      },
+      {
+        cmdName: 'HSET',
+        cmdArgs: ['hash', 'field', 'value'],
+        expected: 'HSET hash field [1 other arguments]',
+      },
+      {
+        cmdName: 'INCRBY',
+        cmdArgs: ['key', 5],
+        expected: 'INCRBY key 5',
+      },
+    ].forEach(({ cmdName, cmdArgs, expected }) => {
+      it(`should serialize the correct number of arguments for ${cmdName}`, () => {
+        assert.strictEqual(
+          defaultDbStatementSerializer(cmdName, cmdArgs),
+          expected
+        );
       });
     });
   });

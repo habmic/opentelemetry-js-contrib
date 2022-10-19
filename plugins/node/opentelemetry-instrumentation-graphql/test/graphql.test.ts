@@ -40,7 +40,7 @@ graphQLInstrumentation.disable();
 // now graphql can be required
 
 import { buildSchema } from './schema';
-import { graphql } from 'graphql';
+import { graphql } from './graphql-adaptor';
 // Construct a schema, using GraphQL schema language
 const schema = buildSchema();
 
@@ -61,7 +61,7 @@ const sourceBookById = `
 `;
 
 const sourceAddBook = `
-  mutation {
+  mutation AddBook {
     addBook(
       name: "Fifth Book"
       authorIds: "0,2"
@@ -107,7 +107,7 @@ describe('graphql', () => {
       let spans: ReadableSpan[];
       beforeEach(async () => {
         create({});
-        await graphql(schema, sourceList1);
+        await graphql({ schema, source: sourceList1 });
         spans = exporter.getFinishedSpans();
       });
 
@@ -143,7 +143,7 @@ describe('graphql', () => {
       });
 
       it('should instrument execute', () => {
-        const executeSpan = spans[2];
+        const executeSpan = spans[6];
 
         assert.deepStrictEqual(
           executeSpan.attributes[AttributeNames.SOURCE],
@@ -155,19 +155,23 @@ describe('graphql', () => {
             '  }\n'
         );
         assert.deepStrictEqual(
-          executeSpan.attributes[AttributeNames.OPERATION],
+          executeSpan.attributes[AttributeNames.OPERATION_TYPE],
           'query'
+        );
+        assert.deepStrictEqual(
+          executeSpan.attributes[AttributeNames.OPERATION_NAME],
+          undefined
         );
         assert.deepStrictEqual(executeSpan.name, SpanNames.EXECUTE);
         assert.deepStrictEqual(executeSpan.parentSpanId, undefined);
       });
 
       it('should instrument resolvers', () => {
-        const executeSpan = spans[2];
-        const resolveParentSpan = spans[3];
-        const span1 = spans[4];
-        const span2 = spans[5];
-        const span3 = spans[6];
+        const executeSpan = spans[6];
+        const resolveParentSpan = spans[2];
+        const span1 = spans[3];
+        const span2 = spans[4];
+        const span3 = spans[5];
 
         assertResolveSpan(
           resolveParentSpan,
@@ -203,13 +207,35 @@ describe('graphql', () => {
           parentId
         );
       });
+
+      it.skip('should execute with correct timing', async () => {
+        const PARSE = 0;
+        const VALIDATE = 1;
+        const RESOLVE = 2;
+        const EXECUTE = 6;
+
+        const times = spans.map(s => {
+          return {
+            start: s.startTime[0] * 1_000 + s.startTime[1] / 1_000_000,
+            end: s.endTime[0] * 1_000 + s.endTime[1] / 1_000_000,
+          };
+        });
+
+        assert.ok(times[PARSE].start <= times[PARSE].end);
+        // This next line is flaky. Parse sometimes ends after Validate starts.
+        assert.ok(times[PARSE].end <= times[VALIDATE].start);
+        assert.ok(times[VALIDATE].start <= times[VALIDATE].end);
+        assert.ok(times[VALIDATE].end <= times[EXECUTE].start);
+        assert.ok(times[EXECUTE].start <= times[RESOLVE].start);
+        assert.ok(times[RESOLVE].end <= times[EXECUTE].end);
+      });
     });
     describe('AND source is query with param', () => {
       let spans: ReadableSpan[];
 
       beforeEach(async () => {
         create({});
-        await graphql(schema, sourceBookById);
+        await graphql({ schema, source: sourceBookById });
         spans = exporter.getFinishedSpans();
       });
 
@@ -245,7 +271,7 @@ describe('graphql', () => {
       });
 
       it('should instrument execute', () => {
-        const executeSpan = spans[2];
+        const executeSpan = spans[4];
 
         assert.deepStrictEqual(
           executeSpan.attributes[AttributeNames.SOURCE],
@@ -257,17 +283,21 @@ describe('graphql', () => {
             '  }\n'
         );
         assert.deepStrictEqual(
-          executeSpan.attributes[AttributeNames.OPERATION],
+          executeSpan.attributes[AttributeNames.OPERATION_TYPE],
           'query'
+        );
+        assert.deepStrictEqual(
+          executeSpan.attributes[AttributeNames.OPERATION_NAME],
+          undefined
         );
         assert.deepStrictEqual(executeSpan.name, SpanNames.EXECUTE);
         assert.deepStrictEqual(executeSpan.parentSpanId, undefined);
       });
 
       it('should instrument resolvers', () => {
-        const executeSpan = spans[2];
-        const resolveParentSpan = spans[3];
-        const span1 = spans[4];
+        const executeSpan = spans[4];
+        const resolveParentSpan = spans[2];
+        const span1 = spans[3];
 
         assertResolveSpan(
           resolveParentSpan,
@@ -293,8 +323,12 @@ describe('graphql', () => {
 
       beforeEach(async () => {
         create({});
-        await graphql(schema, sourceFindUsingVariable, null, null, {
-          id: 2,
+        await graphql({
+          schema,
+          source: sourceFindUsingVariable,
+          variableValues: {
+            id: 2,
+          },
         });
         spans = exporter.getFinishedSpans();
       });
@@ -331,7 +365,7 @@ describe('graphql', () => {
       });
 
       it('should instrument execute', () => {
-        const executeSpan = spans[2];
+        const executeSpan = spans[4];
 
         assert.deepStrictEqual(
           executeSpan.attributes[AttributeNames.SOURCE],
@@ -343,8 +377,12 @@ describe('graphql', () => {
             '  }\n'
         );
         assert.deepStrictEqual(
-          executeSpan.attributes[AttributeNames.OPERATION],
+          executeSpan.attributes[AttributeNames.OPERATION_TYPE],
           'query'
+        );
+        assert.deepStrictEqual(
+          executeSpan.attributes[AttributeNames.OPERATION_NAME],
+          'Query1'
         );
         assert.deepStrictEqual(
           executeSpan.attributes[`${AttributeNames.VARIABLES}id`],
@@ -355,9 +393,9 @@ describe('graphql', () => {
       });
 
       it('should instrument resolvers', () => {
-        const executeSpan = spans[2];
-        const resolveParentSpan = spans[3];
-        const span1 = spans[4];
+        const executeSpan = spans[4];
+        const resolveParentSpan = spans[2];
+        const span1 = spans[3];
 
         assertResolveSpan(
           resolveParentSpan,
@@ -387,7 +425,7 @@ describe('graphql', () => {
         create({
           depth: 0,
         });
-        await graphql(schema, sourceList1);
+        await graphql({ schema, source: sourceList1 });
         spans = exporter.getFinishedSpans();
       });
 
@@ -435,8 +473,12 @@ describe('graphql', () => {
             '  }\n'
         );
         assert.deepStrictEqual(
-          executeSpan.attributes[AttributeNames.OPERATION],
+          executeSpan.attributes[AttributeNames.OPERATION_TYPE],
           'query'
+        );
+        assert.deepStrictEqual(
+          executeSpan.attributes[AttributeNames.OPERATION_NAME],
+          undefined
         );
         assert.deepStrictEqual(executeSpan.name, SpanNames.EXECUTE);
         assert.deepStrictEqual(executeSpan.parentSpanId, undefined);
@@ -451,7 +493,7 @@ describe('graphql', () => {
         create({
           mergeItems: true,
         });
-        await graphql(schema, sourceList1);
+        await graphql({ schema, source: sourceList1 });
         spans = exporter.getFinishedSpans();
       });
 
@@ -487,7 +529,7 @@ describe('graphql', () => {
       });
 
       it('should instrument execute', () => {
-        const executeSpan = spans[2];
+        const executeSpan = spans[4];
 
         assert.deepStrictEqual(
           executeSpan.attributes[AttributeNames.SOURCE],
@@ -499,8 +541,12 @@ describe('graphql', () => {
             '  }\n'
         );
         assert.deepStrictEqual(
-          executeSpan.attributes[AttributeNames.OPERATION],
+          executeSpan.attributes[AttributeNames.OPERATION_TYPE],
           'query'
+        );
+        assert.deepStrictEqual(
+          executeSpan.attributes[AttributeNames.OPERATION_NAME],
+          undefined
         );
         assert.deepStrictEqual(executeSpan.name, SpanNames.EXECUTE);
         assert.deepStrictEqual(executeSpan.parentSpanId, undefined);
@@ -514,7 +560,7 @@ describe('graphql', () => {
           mergeItems: true,
           depth: 0,
         });
-        await graphql(schema, sourceList1);
+        await graphql({ schema, source: sourceList1 });
         spans = exporter.getFinishedSpans();
       });
 
@@ -538,7 +584,7 @@ describe('graphql', () => {
         create({
           allowValues: true,
         });
-        await graphql(schema, sourceBookById);
+        await graphql({ schema, source: sourceBookById });
         spans = exporter.getFinishedSpans();
       });
 
@@ -574,7 +620,7 @@ describe('graphql', () => {
       });
 
       it('should instrument execute', () => {
-        const executeSpan = spans[2];
+        const executeSpan = spans[4];
 
         assert.deepStrictEqual(
           executeSpan.attributes[AttributeNames.SOURCE],
@@ -586,17 +632,21 @@ describe('graphql', () => {
             '  }\n'
         );
         assert.deepStrictEqual(
-          executeSpan.attributes[AttributeNames.OPERATION],
+          executeSpan.attributes[AttributeNames.OPERATION_TYPE],
           'query'
+        );
+        assert.deepStrictEqual(
+          executeSpan.attributes[AttributeNames.OPERATION_NAME],
+          undefined
         );
         assert.deepStrictEqual(executeSpan.name, SpanNames.EXECUTE);
         assert.deepStrictEqual(executeSpan.parentSpanId, undefined);
       });
 
       it('should instrument resolvers', () => {
-        const executeSpan = spans[2];
-        const resolveParentSpan = spans[3];
-        const span1 = spans[4];
+        const executeSpan = spans[4];
+        const resolveParentSpan = spans[2];
+        const span1 = spans[3];
 
         assertResolveSpan(
           resolveParentSpan,
@@ -624,7 +674,7 @@ describe('graphql', () => {
         create({
           allowValues: true,
         });
-        await graphql(schema, sourceAddBook);
+        await graphql({ schema, source: sourceAddBook });
         spans = exporter.getFinishedSpans();
       });
 
@@ -643,7 +693,7 @@ describe('graphql', () => {
         assert.deepStrictEqual(
           parseSpan.attributes[AttributeNames.SOURCE],
           '\n' +
-            '  mutation {\n' +
+            '  mutation AddBook {\n' +
             '    addBook(\n' +
             '      name: "Fifth Book"\n' +
             '      authorIds: "0,2"\n' +
@@ -663,12 +713,12 @@ describe('graphql', () => {
       });
 
       it('should instrument execute', () => {
-        const executeSpan = spans[2];
+        const executeSpan = spans[4];
 
         assert.deepStrictEqual(
           executeSpan.attributes[AttributeNames.SOURCE],
           '\n' +
-            '  mutation {\n' +
+            '  mutation AddBook {\n' +
             '    addBook(\n' +
             '      name: "Fifth Book"\n' +
             '      authorIds: "0,2"\n' +
@@ -678,17 +728,21 @@ describe('graphql', () => {
             '  }\n'
         );
         assert.deepStrictEqual(
-          executeSpan.attributes[AttributeNames.OPERATION],
+          executeSpan.attributes[AttributeNames.OPERATION_TYPE],
           'mutation'
+        );
+        assert.deepStrictEqual(
+          executeSpan.attributes[AttributeNames.OPERATION_NAME],
+          'AddBook'
         );
         assert.deepStrictEqual(executeSpan.name, SpanNames.EXECUTE);
         assert.deepStrictEqual(executeSpan.parentSpanId, undefined);
       });
 
       it('should instrument resolvers', () => {
-        const executeSpan = spans[2];
-        const resolveParentSpan = spans[3];
-        const span1 = spans[4];
+        const executeSpan = spans[4];
+        const resolveParentSpan = spans[2];
+        const span1 = spans[3];
 
         assertResolveSpan(
           resolveParentSpan,
@@ -714,8 +768,12 @@ describe('graphql', () => {
         create({
           allowValues: true,
         });
-        await graphql(schema, sourceFindUsingVariable, null, null, {
-          id: 2,
+        await graphql({
+          schema,
+          source: sourceFindUsingVariable,
+          variableValues: {
+            id: 2,
+          },
         });
         spans = exporter.getFinishedSpans();
       });
@@ -752,7 +810,7 @@ describe('graphql', () => {
       });
 
       it('should instrument execute', () => {
-        const executeSpan = spans[2];
+        const executeSpan = spans[4];
 
         assert.deepStrictEqual(
           executeSpan.attributes[AttributeNames.SOURCE],
@@ -764,8 +822,12 @@ describe('graphql', () => {
             '  }\n'
         );
         assert.deepStrictEqual(
-          executeSpan.attributes[AttributeNames.OPERATION],
+          executeSpan.attributes[AttributeNames.OPERATION_TYPE],
           'query'
+        );
+        assert.deepStrictEqual(
+          executeSpan.attributes[AttributeNames.OPERATION_NAME],
+          'Query1'
         );
         assert.deepStrictEqual(
           executeSpan.attributes[`${AttributeNames.VARIABLES}id`],
@@ -776,9 +838,9 @@ describe('graphql', () => {
       });
 
       it('should instrument resolvers', () => {
-        const executeSpan = spans[2];
-        const resolveParentSpan = spans[3];
-        const span1 = spans[4];
+        const executeSpan = spans[4];
+        const resolveParentSpan = spans[2];
+        const span1 = spans[3];
 
         assertResolveSpan(
           resolveParentSpan,
@@ -808,7 +870,7 @@ describe('graphql', () => {
       create({
         // allowValues: true
       });
-      await graphql(schema, sourceAddBook);
+      await graphql({ schema, source: sourceAddBook });
       spans = exporter.getFinishedSpans();
     });
 
@@ -827,7 +889,7 @@ describe('graphql', () => {
       assert.deepStrictEqual(
         parseSpan.attributes[AttributeNames.SOURCE],
         '\n' +
-          '  mutation {\n' +
+          '  mutation AddBook {\n' +
           '    addBook(\n' +
           '      name: "*"\n' +
           '      authorIds: "*"\n' +
@@ -847,12 +909,12 @@ describe('graphql', () => {
     });
 
     it('should instrument execute', () => {
-      const executeSpan = spans[2];
+      const executeSpan = spans[4];
 
       assert.deepStrictEqual(
         executeSpan.attributes[AttributeNames.SOURCE],
         '\n' +
-          '  mutation {\n' +
+          '  mutation AddBook {\n' +
           '    addBook(\n' +
           '      name: "*"\n' +
           '      authorIds: "*"\n' +
@@ -862,17 +924,21 @@ describe('graphql', () => {
           '  }\n'
       );
       assert.deepStrictEqual(
-        executeSpan.attributes[AttributeNames.OPERATION],
+        executeSpan.attributes[AttributeNames.OPERATION_TYPE],
         'mutation'
+      );
+      assert.deepStrictEqual(
+        executeSpan.attributes[AttributeNames.OPERATION_NAME],
+        'AddBook'
       );
       assert.deepStrictEqual(executeSpan.name, SpanNames.EXECUTE);
       assert.deepStrictEqual(executeSpan.parentSpanId, undefined);
     });
 
     it('should instrument resolvers', () => {
-      const executeSpan = spans[2];
-      const resolveParentSpan = spans[3];
-      const span1 = spans[4];
+      const executeSpan = spans[4];
+      const resolveParentSpan = spans[2];
+      const span1 = spans[3];
 
       assertResolveSpan(
         resolveParentSpan,
@@ -897,7 +963,7 @@ describe('graphql', () => {
 
     beforeEach(async () => {
       create({});
-      await graphql(schema, badQuery);
+      await graphql({ schema, source: badQuery });
       spans = exporter.getFinishedSpans();
     });
 
@@ -932,7 +998,7 @@ describe('graphql', () => {
 
     beforeEach(async () => {
       create({});
-      await graphql(schema, queryInvalid);
+      await graphql({ schema, source: queryInvalid });
       spans = exporter.getFinishedSpans();
     });
 
@@ -978,7 +1044,7 @@ describe('graphql', () => {
 
   describe('responseHook', () => {
     let spans: ReadableSpan[];
-    let graphqlResult: graphqlTypes.ExecutionResult;
+    let graphqlResult: graphqlTypes.ExecutionResult<{ books: unknown[] }>;
     const dataAttributeName = 'graphql_data';
 
     afterEach(() => {
@@ -994,13 +1060,13 @@ describe('graphql', () => {
             span.setAttribute(dataAttributeName, JSON.stringify(data));
           },
         });
-        graphqlResult = await graphql(schema, sourceList1);
+        graphqlResult = await graphql({ schema, source: sourceList1 });
         spans = exporter.getFinishedSpans();
       });
 
       it('should attach response hook data to the resulting spans', () => {
         const querySpan = spans.find(
-          span => span.attributes['graphql.operation.name'] == 'query'
+          span => span.attributes[AttributeNames.OPERATION_TYPE] == 'query'
         );
         const instrumentationResult = querySpan?.attributes[dataAttributeName];
         assert.deepStrictEqual(
@@ -1017,7 +1083,7 @@ describe('graphql', () => {
             throw 'some kind of failure!';
           },
         });
-        graphqlResult = await graphql(schema, sourceList1);
+        graphqlResult = await graphql({ schema, source: sourceList1 });
         spans = exporter.getFinishedSpans();
       });
 
@@ -1034,7 +1100,7 @@ describe('graphql', () => {
           responseHook:
             invalidTypeHook as GraphQLInstrumentationExecutionResponseHook,
         });
-        graphqlResult = await graphql(schema, sourceList1);
+        graphqlResult = await graphql({ schema, source: sourceList1 });
         spans = exporter.getFinishedSpans();
       });
 
@@ -1104,7 +1170,7 @@ describe('graphql', () => {
           '  }\n'
       );
       assert.deepStrictEqual(
-        executeSpan.attributes[AttributeNames.OPERATION],
+        executeSpan.attributes[AttributeNames.OPERATION_NAME],
         'Operation "foo" not supported'
       );
       assert.deepStrictEqual(executeSpan.name, SpanNames.EXECUTE);

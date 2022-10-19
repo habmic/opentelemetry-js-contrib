@@ -32,6 +32,7 @@ import {
   S3Client,
 } from '@aws-sdk/client-s3';
 import { SQS } from '@aws-sdk/client-sqs';
+import { SpanKind } from '@opentelemetry/api';
 
 // set aws environment variables, so tests in non aws environment are able to run
 process.env.AWS_ACCESS_KEY_ID = 'testing';
@@ -78,6 +79,8 @@ describe('instrumentation-aws-sdk-v3', () => {
       expect(span.attributes[SemanticAttributes.RPC_SERVICE]).toEqual('S3');
       expect(span.attributes[AttributeNames.AWS_REGION]).toEqual(region);
       expect(span.name).toEqual('S3.PutObject');
+      expect(span.kind).toEqual(SpanKind.CLIENT);
+      expect(span.attributes[SemanticAttributes.HTTP_STATUS_CODE]).toEqual(200);
     });
 
     it('callback interface', done => {
@@ -104,6 +107,9 @@ describe('instrumentation-aws-sdk-v3', () => {
         expect(span.attributes[SemanticAttributes.RPC_SERVICE]).toEqual('S3');
         expect(span.attributes[AttributeNames.AWS_REGION]).toEqual(region);
         expect(span.name).toEqual('S3.PutObject');
+        expect(span.attributes[SemanticAttributes.HTTP_STATUS_CODE]).toEqual(
+          200
+        );
         done();
       });
     });
@@ -131,6 +137,7 @@ describe('instrumentation-aws-sdk-v3', () => {
       expect(span.attributes[SemanticAttributes.RPC_SERVICE]).toEqual('S3');
       expect(span.attributes[AttributeNames.AWS_REGION]).toEqual(region);
       expect(span.name).toEqual('S3.PutObject');
+      expect(span.attributes[SemanticAttributes.HTTP_STATUS_CODE]).toEqual(200);
     });
 
     it('aws error', async () => {
@@ -288,7 +295,7 @@ describe('instrumentation-aws-sdk-v3', () => {
             'https://sqs.us-east-1.amazonaws.com/731241200085/otel-demo-aws-sdk',
           MessageBody: 'payload example from v3 without batch',
         };
-        await sqsClient.sendMessage(params);
+        const response = await sqsClient.sendMessage(params);
         expect(getTestSpans().length).toBe(1);
         const [span] = getTestSpans();
 
@@ -314,6 +321,66 @@ describe('instrumentation-aws-sdk-v3', () => {
         ).toEqual('otel-demo-aws-sdk');
         expect(span.attributes[SemanticAttributes.MESSAGING_URL]).toEqual(
           params.QueueUrl
+        );
+        expect(
+          span.attributes[SemanticAttributes.MESSAGING_MESSAGE_ID]
+        ).toEqual(response.MessageId);
+        expect(span.attributes[SemanticAttributes.HTTP_STATUS_CODE]).toEqual(
+          200
+        );
+      });
+
+      it('sqs send message batch attributes', async () => {
+        nock(`https://sqs.${region}.amazonaws.com/`)
+          .post('/')
+          .reply(
+            200,
+            fs.readFileSync('./test/mock-responses/sqs-send-batch.xml', 'utf8')
+          );
+        const params = {
+          QueueUrl:
+            'https://sqs.us-east-1.amazonaws.com/731241200085/otel-demo-aws-sdk',
+          MessageBody: 'payload example from v3 without batch',
+          Entries: [
+            {
+              Id: '1000',
+              MessageBody: 'msg body for 1000',
+            },
+            {
+              Id: '1001',
+              MessageBody: 'msg body for 1001',
+            },
+          ],
+        };
+        await sqsClient.sendMessageBatch(params);
+        expect(getTestSpans().length).toBe(1);
+        const [span] = getTestSpans();
+
+        // make sure we have the general aws attributes:
+        expect(span.attributes[SemanticAttributes.RPC_SYSTEM]).toEqual(
+          'aws-api'
+        );
+        expect(span.attributes[SemanticAttributes.RPC_METHOD]).toEqual(
+          'SendMessageBatch'
+        );
+        expect(span.attributes[SemanticAttributes.RPC_SERVICE]).toEqual('SQS');
+        expect(span.attributes[AttributeNames.AWS_REGION]).toEqual(region);
+
+        // messaging semantic attributes
+        expect(span.attributes[SemanticAttributes.MESSAGING_SYSTEM]).toEqual(
+          'aws.sqs'
+        );
+        expect(
+          span.attributes[SemanticAttributes.MESSAGING_DESTINATION_KIND]
+        ).toEqual(MessagingDestinationKindValues.QUEUE);
+        expect(
+          span.attributes[SemanticAttributes.MESSAGING_DESTINATION]
+        ).toEqual('otel-demo-aws-sdk');
+        expect(span.attributes[SemanticAttributes.MESSAGING_URL]).toEqual(
+          params.QueueUrl
+        );
+        expect(span.attributes[SemanticAttributes.HTTP_STATUS_CODE]).toEqual(
+          200
         );
       });
 
@@ -352,6 +419,9 @@ describe('instrumentation-aws-sdk-v3', () => {
             .attributes;
           expect(attributes[SemanticAttributes.MESSAGING_OPERATION]).toMatch(
             MessagingOperationValues.RECEIVE
+          );
+          expect(span.attributes[SemanticAttributes.HTTP_STATUS_CODE]).toEqual(
+            200
           );
           done();
         });

@@ -15,7 +15,7 @@
  */
 
 import * as assert from 'assert';
-import { context, ROOT_CONTEXT, SpanStatusCode } from '@opentelemetry/api';
+import { context, SpanStatusCode } from '@opentelemetry/api';
 import { SemanticAttributes } from '@opentelemetry/semantic-conventions';
 import { AsyncHooksContextManager } from '@opentelemetry/context-async-hooks';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
@@ -67,10 +67,18 @@ provider.addSpanProcessor(spanProcessor);
 instrumentation.enable();
 httpInstrumentation.enable();
 
-import 'fastify-express';
+import '@fastify/express';
 import { FastifyInstance } from 'fastify/types/instance';
 
 const Fastify = require('fastify');
+
+const assertRootContextActive = () => {
+  // Asserting the context.active() to strictly equal ROOT_CONTEXT doesn't
+  // always work because of the linking and dep resolution.
+  // Specially in our CI environment there can be multiple instances to
+  // different @opentelemetry/api and thus ROOT_CONTEXTs in the tree.
+  assert.strictEqual((context.active() as any)['_currentContext'].size, 0);
+};
 
 function getSpans(): ReadableSpan[] {
   const spans = memoryExporter.getFinishedSpans().filter(s => {
@@ -85,28 +93,22 @@ describe('fastify', () => {
   let PORT: number;
   let app: FastifyInstance;
 
-  function startServer(): Promise<void> {
-    return new Promise<void>(resolve =>
-      app.listen(0, (err, address) => {
-        const url = new URL(address);
-        PORT = parseInt(url.port, 10);
-        resolve();
-      })
-    );
+  async function startServer(): Promise<void> {
+    const address = await app.listen({ port: 0 });
+    const url = new URL(address);
+    PORT = parseInt(url.port, 10);
   }
 
   beforeEach(async () => {
     instrumentation.enable();
     app = Fastify();
-    app.register(require('fastify-express'));
+    app.register(require('@fastify/express'));
   });
 
   afterEach(async () => {
-    await new Promise<void>(resolve =>
-      app.close(() => {
-        resolve();
-      })
-    );
+    if (app.server.address()) {
+      await app.close();
+    }
 
     contextManager.disable();
     contextManager.enable();
@@ -120,8 +122,8 @@ describe('fastify', () => {
       app.get('/test', (req, res) => {
         res.send('OK');
       });
-      await startServer();
 
+      await startServer();
       await httpRequest.get(`http://localhost:${PORT}/test`);
 
       const spans = getSpans();
@@ -136,7 +138,6 @@ describe('fastify', () => {
       });
 
       await startServer();
-
       await httpRequest.get(`http://localhost:${PORT}/test`);
 
       const spans = memoryExporter.getFinishedSpans();
@@ -144,7 +145,7 @@ describe('fastify', () => {
       const span = spans[3];
       assert.deepStrictEqual(span.attributes, {
         'fastify.type': 'request_handler',
-        'plugin.name': 'fastify-express',
+        'plugin.name': 'fastify -> @fastify/express',
         [SemanticAttributes.HTTP_ROUTE]: '/test',
       });
       assert.strictEqual(span.name, `request handler - ${ANONYMOUS_NAME}`);
@@ -159,7 +160,6 @@ describe('fastify', () => {
       });
 
       await startServer();
-
       await httpRequest.get(`http://localhost:${PORT}/test`);
 
       const spans = memoryExporter.getFinishedSpans();
@@ -168,7 +168,7 @@ describe('fastify', () => {
       assert.deepStrictEqual(span.attributes, {
         'fastify.type': 'request_handler',
         'fastify.name': 'namedHandler',
-        'plugin.name': 'fastify-express',
+        'plugin.name': 'fastify -> @fastify/express',
         [SemanticAttributes.HTTP_ROUTE]: '/test',
       });
       assert.strictEqual(span.name, 'request handler - namedHandler');
@@ -207,8 +207,8 @@ describe('fastify', () => {
         app.register(subsystem);
 
         await startServer();
-
         await httpRequest.get(`http://localhost:${PORT}/test/1`);
+
         assert.strictEqual(getSpans().length, 4);
       });
 
@@ -232,7 +232,7 @@ describe('fastify', () => {
         assert.strictEqual(span.name, 'middleware - runConnect');
         assert.deepStrictEqual(span.attributes, {
           'fastify.type': 'middleware',
-          'plugin.name': 'fastify-express',
+          'plugin.name': 'fastify -> @fastify/express',
           'hook.name': 'onRequest',
         });
 
@@ -248,7 +248,7 @@ describe('fastify', () => {
         assert.strictEqual(span.name, 'middleware - enhanceRequest');
         assert.deepStrictEqual(span.attributes, {
           'fastify.type': 'middleware',
-          'plugin.name': 'fastify-express',
+          'plugin.name': 'fastify -> @fastify/express',
           'hook.name': 'onRequest',
         });
 
@@ -338,12 +338,16 @@ describe('fastify', () => {
 
           // done was not yet called from the hook, so it should not end the span
           const preDoneSpans = getSpans().filter(
-            s => !s.attributes[AttributeNames.PLUGIN_NAME]
+            s =>
+              !s.attributes[AttributeNames.PLUGIN_NAME] ||
+              s.attributes[AttributeNames.PLUGIN_NAME] === 'fastify'
           );
           assert.strictEqual(preDoneSpans.length, 0);
           hookDone!();
           const postDoneSpans = getSpans().filter(
-            s => !s.attributes[AttributeNames.PLUGIN_NAME]
+            s =>
+              !s.attributes[AttributeNames.PLUGIN_NAME] ||
+              s.attributes[AttributeNames.PLUGIN_NAME] === 'fastify'
           );
           assert.strictEqual(postDoneSpans.length, 1);
         });
@@ -367,7 +371,9 @@ describe('fastify', () => {
           await startServer();
           await httpRequest.get(`http://localhost:${PORT}/test`);
           const spans = getSpans().filter(
-            s => !s.attributes[AttributeNames.PLUGIN_NAME]
+            s =>
+              !s.attributes[AttributeNames.PLUGIN_NAME] ||
+              s.attributes[AttributeNames.PLUGIN_NAME] === 'fastify'
           );
           assert.strictEqual(spans.length, 1);
         });
@@ -375,51 +381,49 @@ describe('fastify', () => {
     });
 
     describe('application hooks', () => {
-      it('onRoute not instrumented', done => {
+      afterEach(() => {
+        const spans = getSpans();
+        assert.strictEqual(spans.length, 0);
+      });
+
+      it('onRoute not instrumented', async () => {
         app.addHook('onRoute', () => {
-          assert.strictEqual(context.active(), ROOT_CONTEXT);
+          assertRootContextActive();
         });
         // add a route to trigger the 'onRoute' hook
         app.get('/test', (_req: FastifyRequest, reply: FastifyReply) => {
           reply.send('OK');
         });
 
-        startServer()
-          .then(() => done())
-          .catch(err => done(err));
+        await startServer();
       });
 
-      it('onRegister is not instrumented', done => {
+      it('onRegister is not instrumented', async () => {
         app.addHook('onRegister', () => {
-          assert.strictEqual(context.active(), ROOT_CONTEXT);
+          assertRootContextActive();
         });
         // register a plugin to trigger 'onRegister' hook
         app.register((fastify, options, done) => {
           done();
         });
-        startServer()
-          .then(() => done())
-          .catch(err => done(err));
+
+        await startServer();
       });
 
-      it('onReady is not instrumented', done => {
+      it('onReady is not instrumented', async () => {
         app.addHook('onReady', () => {
-          assert.strictEqual(context.active(), ROOT_CONTEXT);
+          assertRootContextActive();
         });
-        startServer()
-          .then(() => done())
-          .catch(err => done(err));
+
+        await startServer();
       });
 
-      it('onClose is not instrumented', done => {
+      it('onClose is not instrumented', async () => {
         app.addHook('onClose', () => {
-          assert.strictEqual(context.active(), ROOT_CONTEXT);
+          assertRootContextActive();
         });
-        startServer()
-          .then(() => {
-            app.close().then(() => done());
-          })
-          .catch(err => done(err));
+
+        await startServer();
       });
     });
   });

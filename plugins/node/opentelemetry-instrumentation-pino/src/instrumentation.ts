@@ -26,11 +26,10 @@ import {
   InstrumentationNodeModuleDefinition,
   safeExecuteInTheMiddle,
 } from '@opentelemetry/instrumentation';
-import { Pino, PinoInstrumentationConfig } from './types';
+import { PinoInstrumentationConfig } from './types';
 import { VERSION } from './version';
-import type { pino } from 'pino';
 
-const pinoVersions = ['>=5.14.0 <8'];
+const pinoVersions = ['>=5.14.0 <9'];
 
 export class PinoInstrumentation extends InstrumentationBase {
   constructor(config: PinoInstrumentationConfig = {}) {
@@ -39,14 +38,17 @@ export class PinoInstrumentation extends InstrumentationBase {
 
   protected init() {
     return [
-      new InstrumentationNodeModuleDefinition<Pino>(
+      new InstrumentationNodeModuleDefinition<any>(
         'pino',
         pinoVersions,
-        pinoModule => {
+        (pinoModule, moduleVersion) => {
+          diag.debug(`Applying patch for pino@${moduleVersion}`);
           const instrumentation = this;
           const patchedPino = Object.assign((...args: unknown[]) => {
             if (args.length == 0) {
-              return pinoModule({ mixin: instrumentation._getMixinFunction() });
+              return pinoModule({
+                mixin: instrumentation._getMixinFunction(),
+              });
             }
 
             if (args.length == 1) {
@@ -59,16 +61,21 @@ export class PinoInstrumentation extends InstrumentationBase {
                 args.splice(0, 0, {
                   mixin: instrumentation._getMixinFunction(),
                 });
-                return pinoModule(...(args as Parameters<Pino>));
+                return pinoModule(...args);
               }
             }
 
-            args[0] = instrumentation._combineOptions(
-              args[0] as pino.LoggerOptions
-            );
+            args[0] = instrumentation._combineOptions(args[0]);
 
-            return pinoModule(...(args as Parameters<Pino>));
+            return pinoModule(...args);
           }, pinoModule);
+
+          if (typeof patchedPino.pino === 'function') {
+            patchedPino.pino = patchedPino;
+          }
+          if (typeof patchedPino.default === 'function') {
+            patchedPino.default = patchedPino;
+          }
 
           return patchedPino;
         }
@@ -84,7 +91,7 @@ export class PinoInstrumentation extends InstrumentationBase {
     this._config = config;
   }
 
-  private _callHook(span: Span, record: Record<string, string>) {
+  private _callHook(span: Span, record: Record<string, string>, level: number) {
     const hook = this.getConfig().logHook;
 
     if (!hook) {
@@ -92,7 +99,7 @@ export class PinoInstrumentation extends InstrumentationBase {
     }
 
     safeExecuteInTheMiddle(
-      () => hook(span, record),
+      () => hook(span, record, level),
       err => {
         if (err) {
           diag.error('pino instrumentation: error calling logHook', err);
@@ -104,7 +111,7 @@ export class PinoInstrumentation extends InstrumentationBase {
 
   private _getMixinFunction() {
     const instrumentation = this;
-    return function otelMixin() {
+    return function otelMixin(_context: object, level: number) {
       if (!instrumentation.isEnabled()) {
         return {};
       }
@@ -127,13 +134,13 @@ export class PinoInstrumentation extends InstrumentationBase {
         trace_flags: `0${spanContext.traceFlags.toString(16)}`,
       };
 
-      instrumentation._callHook(span, record);
+      instrumentation._callHook(span, record, level);
 
       return record;
     };
   }
 
-  private _combineOptions(options?: pino.LoggerOptions) {
+  private _combineOptions(options?: any) {
     if (options === undefined) {
       return { mixin: this._getMixinFunction() };
     }
@@ -146,8 +153,11 @@ export class PinoInstrumentation extends InstrumentationBase {
     const originalMixin = options.mixin;
     const otelMixin = this._getMixinFunction();
 
-    options.mixin = () => {
-      return Object.assign(otelMixin(), originalMixin());
+    options.mixin = (context: object, level: number) => {
+      return Object.assign(
+        otelMixin(context, level),
+        originalMixin(context, level)
+      );
     };
 
     return options;

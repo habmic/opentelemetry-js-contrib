@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 import { NormalizedRequest } from './types';
-import type { Request } from 'aws-sdk';
 import { Context, SpanAttributes, context } from '@opentelemetry/api';
 import { SemanticAttributes } from '@opentelemetry/semantic-conventions';
 import { AttributeNames } from './enums';
@@ -32,14 +31,12 @@ export const removeSuffixFromStringIfExists = (
     : str;
 };
 
-export const normalizeV2Request = (
-  awsV2Request: Request<any, any>
-): NormalizedRequest => {
-  const service = (awsV2Request as any)?.service;
+export const normalizeV2Request = (awsV2Request: any): NormalizedRequest => {
+  const service = awsV2Request?.service;
   return {
     serviceName: service?.api?.serviceId?.replace(/\s+/g, ''),
-    commandName: toPascalCase((awsV2Request as any)?.operation),
-    commandInput: (awsV2Request as any).params,
+    commandName: toPascalCase(awsV2Request?.operation),
+    commandInput: awsV2Request.params,
     region: service?.config?.region,
   };
 };
@@ -72,16 +69,24 @@ export const extractAttributesFromNormalizedRequest = (
   };
 };
 
-export const bindPromise = (
-  target: Promise<any>,
+export const bindPromise = <T = unknown>(
+  target: Promise<T>,
   contextForCallbacks: Context,
   rebindCount = 1
-): Promise<any> => {
+): Promise<T> => {
   const origThen = target.then;
-  target.then = function (onFulfilled, onRejected) {
+  type PromiseThenParameters = Parameters<Promise<T>['then']>;
+  target.then = function <TResult1 = T, TResult2 = never>(
+    onFulfilled: PromiseThenParameters[0],
+    onRejected: PromiseThenParameters[1]
+  ): Promise<TResult1 | TResult2> {
     const newOnFulfilled = context.bind(contextForCallbacks, onFulfilled);
     const newOnRejected = context.bind(contextForCallbacks, onRejected);
-    const patchedPromise = origThen.call(this, newOnFulfilled, newOnRejected);
+    const patchedPromise = origThen.call<
+      Promise<T>,
+      any[],
+      Promise<TResult1 | TResult2>
+    >(this, newOnFulfilled, newOnRejected);
     return rebindCount > 1
       ? bindPromise(patchedPromise, contextForCallbacks, rebindCount - 1)
       : patchedPromise;

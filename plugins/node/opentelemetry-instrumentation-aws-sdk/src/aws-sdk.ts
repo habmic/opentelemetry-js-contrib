@@ -57,6 +57,7 @@ import {
   removeSuffixFromStringIfExists,
 } from './utils';
 import { RequestMetadata } from './services/ServiceExtension';
+import { SemanticAttributes } from '@opentelemetry/semantic-conventions';
 
 const V3_CLIENT_CONFIG_KEY = Symbol(
   'opentelemetry.instrumentation.aws-sdk.client.config'
@@ -70,7 +71,7 @@ type V2PluginRequest = AWS.Request<any, any> & {
   [REQUEST_SPAN_KEY]?: Span;
 };
 
-export class AwsInstrumentation extends InstrumentationBase<typeof AWS> {
+export class AwsInstrumentation extends InstrumentationBase<any> {
   static readonly component = 'aws-sdk';
   protected override _config!: AwsSdkInstrumentationConfig;
   private servicesExtensions: ServicesExtensions = new ServicesExtensions();
@@ -176,7 +177,7 @@ export class AwsInstrumentation extends InstrumentationBase<typeof AWS> {
     return moduleExports;
   }
 
-  protected patchV2(moduleExports: typeof AWS, moduleVersion?: string) {
+  protected patchV2(moduleExports: any, moduleVersion?: string) {
     diag.debug(
       `aws-sdk instrumentation: applying patch to ${AwsInstrumentation.component}`
     );
@@ -195,7 +196,7 @@ export class AwsInstrumentation extends InstrumentationBase<typeof AWS> {
     return moduleExports;
   }
 
-  protected unpatchV2(moduleExports?: typeof AWS) {
+  protected unpatchV2(moduleExports?: any) {
     if (isWrapped(moduleExports?.Request.prototype.send)) {
       this._unwrap(moduleExports!.Request.prototype, 'send');
     }
@@ -212,7 +213,7 @@ export class AwsInstrumentation extends InstrumentationBase<typeof AWS> {
       metadata.spanName ??
       `${normalizedRequest.serviceName}.${normalizedRequest.commandName}`;
     const newSpan = this.tracer.startSpan(name, {
-      kind: metadata.spanKind,
+      kind: metadata.spanKind ?? SpanKind.CLIENT,
       attributes: {
         ...extractAttributesFromNormalizedRequest(normalizedRequest),
         ...metadata.spanAttributes,
@@ -310,9 +311,11 @@ export class AwsInstrumentation extends InstrumentationBase<typeof AWS> {
         }
         delete v2Request[REQUEST_SPAN_KEY];
 
+        const requestId = response.requestId;
         const normalizedResponse: NormalizedResponse = {
           data: response.data,
           request: normalizedRequest,
+          requestId: requestId,
         };
 
         self._callUserResponseHook(span, normalizedResponse);
@@ -327,7 +330,15 @@ export class AwsInstrumentation extends InstrumentationBase<typeof AWS> {
           );
         }
 
-        span.setAttribute(AttributeNames.AWS_REQUEST_ID, response.requestId);
+        span.setAttribute(AttributeNames.AWS_REQUEST_ID, requestId);
+
+        const httpStatusCode = response.httpResponse?.statusCode;
+        if (httpStatusCode) {
+          span.setAttribute(
+            SemanticAttributes.HTTP_STATUS_CODE,
+            httpStatusCode
+          );
+        }
         span.end();
       });
     });
@@ -472,6 +483,16 @@ export class AwsInstrumentation extends InstrumentationBase<typeof AWS> {
                   if (requestId) {
                     span.setAttribute(AttributeNames.AWS_REQUEST_ID, requestId);
                   }
+
+                  const httpStatusCode =
+                    response.output?.$metadata?.httpStatusCode;
+                  if (httpStatusCode) {
+                    span.setAttribute(
+                      SemanticAttributes.HTTP_STATUS_CODE,
+                      httpStatusCode
+                    );
+                  }
+
                   const extendedRequestId =
                     response.output?.$metadata?.extendedRequestId;
                   if (extendedRequestId) {
@@ -484,6 +505,7 @@ export class AwsInstrumentation extends InstrumentationBase<typeof AWS> {
                   const normalizedResponse: NormalizedResponse = {
                     data: response.output,
                     request: normalizedRequest,
+                    requestId: requestId,
                   };
                   self.servicesExtensions.responseHook(
                     normalizedResponse,

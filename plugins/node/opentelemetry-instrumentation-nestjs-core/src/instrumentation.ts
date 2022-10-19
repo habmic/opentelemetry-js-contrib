@@ -17,11 +17,11 @@
 import * as api from '@opentelemetry/api';
 import {
   InstrumentationBase,
+  InstrumentationConfig,
   InstrumentationNodeModuleDefinition,
   InstrumentationNodeModuleFile,
   isWrapped,
 } from '@opentelemetry/instrumentation';
-import type * as NestJS from '@nestjs/core';
 import type { NestFactory } from '@nestjs/core/nest-factory.js';
 import type { RouterExecutionContext } from '@nestjs/core/router/router-execution-context.js';
 import type { Controller } from '@nestjs/common/interfaces';
@@ -29,13 +29,13 @@ import { SemanticAttributes } from '@opentelemetry/semantic-conventions';
 import { VERSION } from './version';
 import { AttributeNames, NestType } from './enums';
 
-export class Instrumentation extends InstrumentationBase<typeof NestJS> {
+export class Instrumentation extends InstrumentationBase<any> {
   static readonly COMPONENT = '@nestjs/core';
   static readonly COMMON_ATTRIBUTES = {
     component: Instrumentation.COMPONENT,
   };
 
-  constructor() {
+  constructor(config: InstrumentationConfig = {}) {
     super('@opentelemetry/instrumentation-nestjs-core', VERSION);
   }
 
@@ -239,6 +239,16 @@ function createWrapHandler(
   if (handler.name) {
     Object.defineProperty(wrappedHandler, 'name', { value: handler.name });
   }
+
+  // Get the current metadata and set onto the wrapper to ensure other decorators ( ie: NestJS EventPattern / RolesGuard )
+  // won't be affected by the use of this instrumentation
+  Reflect.getMetadataKeys(handler).forEach(metadataKey => {
+    Reflect.defineMetadata(
+      metadataKey,
+      Reflect.getMetadata(metadataKey, handler),
+      wrappedHandler
+    );
+  });
   return wrappedHandler;
 }
 

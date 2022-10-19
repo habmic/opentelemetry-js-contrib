@@ -14,20 +14,16 @@
  * limitations under the License.
  */
 
-import {
-  hrTime,
-  setRPCMetadata,
-  getRPCMetadata,
-  RPCType,
-} from '@opentelemetry/core';
+import { setRPCMetadata, getRPCMetadata, RPCType } from '@opentelemetry/core';
 import { trace, context, diag, SpanAttributes } from '@opentelemetry/api';
-import * as express from 'express';
+import type * as express from 'express';
 import {
   ExpressLayer,
   ExpressRouter,
   PatchedRequest,
   _LAYERS_STORE_PROPERTY,
   ExpressInstrumentationConfig,
+  ExpressRequestInfo,
 } from './types';
 import { ExpressLayerType } from './enums/ExpressLayerType';
 import { AttributeNames } from './enums/AttributeNames';
@@ -37,6 +33,7 @@ import {
   InstrumentationBase,
   InstrumentationNodeModuleDefinition,
   isWrapped,
+  safeExecuteInTheMiddle,
 } from '@opentelemetry/instrumentation';
 import { SemanticAttributes } from '@opentelemetry/semantic-conventions';
 
@@ -56,6 +53,14 @@ export class ExpressInstrumentation extends InstrumentationBase<
       VERSION,
       Object.assign({}, config)
     );
+  }
+
+  override setConfig(config: ExpressInstrumentationConfig = {}) {
+    this._config = Object.assign({}, config);
+  }
+
+  override getConfig(): ExpressInstrumentationConfig {
+    return this._config as ExpressInstrumentationConfig;
   }
 
   init() {
@@ -92,9 +97,10 @@ export class ExpressInstrumentation extends InstrumentationBase<
         (moduleExports, moduleVersion) => {
           if (moduleExports === undefined) return;
           diag.debug(`Removing patch for express@${moduleVersion}`);
-          this._unwrap(moduleExports.Router.prototype, 'route');
-          this._unwrap(moduleExports.Router.prototype, 'use');
-          this._unwrap(moduleExports.application.prototype, 'use');
+          const routerProto = moduleExports.Router as unknown as express.Router;
+          this._unwrap(routerProto, 'route');
+          this._unwrap(routerProto, 'use');
+          this._unwrap(moduleExports.application, 'use');
         }
       ),
     ];
@@ -202,9 +208,14 @@ export class ExpressInstrumentation extends InstrumentationBase<
             ExpressLayerType.REQUEST_HANDLER &&
           rpcMetadata?.type === RPCType.HTTP
         ) {
-          rpcMetadata.span.updateName(
+          const name = instrumentation._getSpanName(
+            {
+              request: req,
+              route,
+            },
             `${req.method} ${route.length > 0 ? route : '/'}`
           );
+          rpcMetadata.span.updateName(name);
         }
 
         // verify against the config if the layer should be ignored
@@ -218,25 +229,48 @@ export class ExpressInstrumentation extends InstrumentationBase<
           return original.apply(this, arguments);
         }
 
-        const span = instrumentation.tracer.startSpan(metadata.name, {
+        const spanName = instrumentation._getSpanName(
+          {
+            request: req,
+            layerType: type,
+            route,
+          },
+          metadata.name
+        );
+        const span = instrumentation.tracer.startSpan(spanName, {
           attributes: Object.assign(attributes, metadata.attributes),
         });
-        const startTime = hrTime();
+
+        if (instrumentation.getConfig().requestHook) {
+          safeExecuteInTheMiddle(
+            () =>
+              instrumentation.getConfig().requestHook!(span, {
+                request: req,
+                layerType: type,
+                route,
+              }),
+            e => {
+              if (e) {
+                diag.error('express instrumentation: request hook failed', e);
+              }
+            },
+            true
+          );
+        }
+
         let spanHasEnded = false;
-        // If we found anything that isnt a middleware, there no point of measuring
-        // their time since they dont have callback.
         if (
           metadata.attributes[AttributeNames.EXPRESS_TYPE] !==
           ExpressLayerType.MIDDLEWARE
         ) {
-          span.end(startTime);
+          span.end();
           spanHasEnded = true;
         }
         // listener for response.on('finish')
         const onResponseFinish = () => {
           if (spanHasEnded === false) {
             spanHasEnded = true;
-            span.end(startTime);
+            span.end();
           }
         };
         // verify we have a callback
@@ -276,5 +310,23 @@ export class ExpressInstrumentation extends InstrumentationBase<
         return result;
       };
     });
+  }
+
+  _getSpanName(info: ExpressRequestInfo, defaultName: string) {
+    const hook = this.getConfig().spanNameHook;
+
+    if (!(hook instanceof Function)) {
+      return defaultName;
+    }
+
+    try {
+      return hook(info, defaultName) ?? defaultName;
+    } catch (err) {
+      diag.error(
+        'express instrumentation: error calling span name rewrite hook',
+        err
+      );
+      return defaultName;
+    }
   }
 }

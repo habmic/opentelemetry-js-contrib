@@ -24,6 +24,7 @@ import { AsyncHooksContextManager } from '@opentelemetry/context-async-hooks';
 import { Writable } from 'stream';
 import * as assert from 'assert';
 import * as sinon from 'sinon';
+import * as semver from 'semver';
 import type { pino as Pino } from 'pino';
 
 import { PinoInstrumentation } from '../src';
@@ -74,11 +75,16 @@ describe('PinoInstrumentation', () => {
     return record;
   }
 
-  function init() {
+  function init(importType: 'global' | 'default' | 'pino' = 'global') {
     stream = new Writable();
     stream._write = () => {};
     writeSpy = sinon.spy(stream, 'write');
-    logger = pino(stream);
+    if (importType === 'global') {
+      logger = pino(stream);
+    } else {
+      // @ts-expect-error the same function reexported
+      logger = pino[importType](stream);
+    }
   }
 
   before(() => {
@@ -99,6 +105,30 @@ describe('PinoInstrumentation', () => {
       });
     });
 
+    it('injects span context to records in default export', function () {
+      // @ts-expect-error the same function reexported
+      if (!pino.default) {
+        this.skip();
+      }
+      init('default');
+      const span = tracer.startSpan('abc');
+      context.with(trace.setSpan(context.active(), span), () => {
+        testInjection(span);
+      });
+    });
+
+    it('injects span context to records in named export', function () {
+      // @ts-expect-error the same function reexported
+      if (!pino.pino) {
+        this.skip();
+      }
+      init('pino');
+      const span = tracer.startSpan('abc');
+      context.with(trace.setSpan(context.active(), span), () => {
+        testInjection(span);
+      });
+    });
+
     it('injects span context to child logger records', () => {
       const span = tracer.startSpan('abc');
       context.with(trace.setSpan(context.active(), span), () => {
@@ -112,8 +142,11 @@ describe('PinoInstrumentation', () => {
       const span = tracer.startSpan('abc');
       instrumentation.setConfig({
         enabled: true,
-        logHook: (_span, record) => {
+        logHook: (_span, record, level) => {
           record['resource.service.name'] = 'test-service';
+          if (semver.satisfies(pino.version, '>= 7.9.0')) {
+            assert.strictEqual(level, 30);
+          }
         },
       });
       context.with(trace.setSpan(context.active(), span), () => {
@@ -239,7 +272,7 @@ describe('PinoInstrumentation', () => {
       instrumentation.enable();
     });
 
-    beforeEach(init);
+    beforeEach(() => init());
 
     it('does not inject span context', () => {
       const span = tracer.startSpan('abc');

@@ -16,6 +16,7 @@
 
 import * as api from '@opentelemetry/api';
 import {
+  InstrumentationConfig,
   InstrumentationBase,
   InstrumentationNodeModuleDefinition,
   InstrumentationNodeModuleFile,
@@ -33,17 +34,19 @@ import * as utils from './utils';
 import AttributeNames from './enums/AttributeNames';
 import LayerType from './enums/LayerType';
 
-export default class RouterInstrumentation extends InstrumentationBase<
-  typeof Router
-> {
-  constructor() {
-    super(`@opentelemetry/instrumentation-${constants.MODULE_NAME}`, VERSION);
+export default class RouterInstrumentation extends InstrumentationBase<any> {
+  constructor(config?: InstrumentationConfig) {
+    super(
+      `@opentelemetry/instrumentation-${constants.MODULE_NAME}`,
+      VERSION,
+      config
+    );
   }
 
   private _moduleVersion?: string;
 
   init() {
-    const module = new InstrumentationNodeModuleDefinition<typeof Router>(
+    const module = new InstrumentationNodeModuleDefinition<any>(
       constants.MODULE_NAME,
       constants.SUPPORTED_VERSIONS,
       (moduleExports, moduleVersion) => {
@@ -170,7 +173,7 @@ export default class RouterInstrumentation extends InstrumentationBase<
     const type = layer.method
       ? LayerType.REQUEST_HANDLER
       : LayerType.MIDDLEWARE;
-    const route = utils.getRoute(req);
+    const route = req.baseUrl + (req.route?.path ?? '') || '/';
     const spanName =
       type === LayerType.REQUEST_HANDLER
         ? `request handler - ${route}`

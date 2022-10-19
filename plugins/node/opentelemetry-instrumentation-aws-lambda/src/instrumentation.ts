@@ -156,6 +156,7 @@ export class AwsLambdaInstrumentation extends InstrumentationBase {
       const config = plugin._config;
       const parent = AwsLambdaInstrumentation._determineParent(
         event,
+        context,
         config.disableAwsContextPropagation === true,
         config.eventContextExtractor ||
           AwsLambdaInstrumentation._defaultEventContextExtractor
@@ -189,7 +190,7 @@ export class AwsLambdaInstrumentation extends InstrumentationBase {
         );
       }
 
-      return otelContext.with(trace.setSpan(otelContext.active(), span), () => {
+      return otelContext.with(trace.setSpan(parent, span), () => {
         // Lambda seems to pass a callback even if handler is of Promise form, so we wrap all the time before calling
         // the handler and see if the result is a Promise or not. In such a case, the callback is usually ignored. If
         // the handler happened to both call the callback and complete a returned Promise, whichever happens first will
@@ -241,11 +242,8 @@ export class AwsLambdaInstrumentation extends InstrumentationBase {
       currentProvider = currentProvider.getDelegate();
     }
 
-    if (typeof currentProvider.getActiveSpanProcessor === 'function') {
-      const activeSpanProcessor = currentProvider.getActiveSpanProcessor();
-      if (typeof activeSpanProcessor.forceFlush === 'function') {
-        return activeSpanProcessor.forceFlush.bind(activeSpanProcessor);
-      }
+    if (typeof currentProvider.forceFlush === 'function') {
+      return currentProvider.forceFlush.bind(currentProvider);
     }
 
     return undefined;
@@ -334,6 +332,7 @@ export class AwsLambdaInstrumentation extends InstrumentationBase {
 
   private static _determineParent(
     event: any,
+    context: Context,
     disableAwsContextPropagation: boolean,
     eventContextExtractor: EventContextExtractor
   ): OtelContext {
@@ -361,7 +360,7 @@ export class AwsLambdaInstrumentation extends InstrumentationBase {
       }
     }
     const extractedContext = safeExecuteInTheMiddle(
-      () => eventContextExtractor(event),
+      () => eventContextExtractor(event, context),
       e => {
         if (e)
           diag.error(

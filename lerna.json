@@ -1,11 +1,12 @@
 {
-  "lerna": "3.13.4",
   "npmClient": "npm",
   "packages": [
     "packages/*",
     "metapackages/*",
     "plugins/node/*",
+    "plugins/node/*/examples",
     "plugins/web/*",
+    "plugins/web/*/examples",
     "propagators/*",
     "detectors/node/*"
   ],

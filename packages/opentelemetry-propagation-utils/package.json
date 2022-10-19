@@ -1,6 +1,6 @@
 {
   "name": "@opentelemetry/propagation-utils",
-  "version": "0.26.0",
+  "version": "0.29.0",
   "description": "Propagation utilities for opentelemetry instrumentations",
   "main": "build/src/index.js",
   "types": "build/src/index.d.ts",
@@ -12,10 +12,11 @@
     "compile": "tsc --build tsconfig.json tsconfig.esm.json",
     "lint": "eslint . --ext .ts",
     "lint:fix": "eslint . --ext .ts --fix",
-    "precompile": "tsc --version && lerna run version --scope @opentelemetry/propagation-utils --include-filtered-dependencies",
+    "precompile": "tsc --version && lerna run version:update --scope @opentelemetry/propagation-utils --include-dependencies",
     "prepare": "npm run compile",
     "prewatch": "npm run precompile",
-    "version": "node ../../scripts/version-update.js",
+    "tdd": "npm run test -- --watch-extensions ts --watch",
+    "test": "nyc ts-mocha -p tsconfig.json 'test/**/*.test.ts'",
     "watch": "tsc --build --watch tsconfig.json tsconfig.esm.json"
   },
   "repository": "open-telemetry/opentelemetry-js-contrib",
@@ -32,17 +33,28 @@
   ],
   "author": "OpenTelemetry Authors",
   "license": "Apache-2.0",
+  "engines": {
+    "node": ">=14"
+  },
   "bugs": {
     "url": "https://github.com/open-telemetry/opentelemetry-js-contrib/issues"
   },
-  "homepage": "https://github.com/open-telemetry/opentelemetry-js-contrib#readme",
+  "homepage": "https://github.com/open-telemetry/opentelemetry-js-contrib/tree/main/packages/opentelemetry-propagation-utils#readme",
   "peerDependencies": {
-    "@opentelemetry/api": "^1.0.1"
+    "@opentelemetry/api": "^1.0.0"
   },
   "devDependencies": {
-    "@opentelemetry/api": "1.0.1",
-    "@types/node": "14.17.9",
+    "@opentelemetry/api": "^1.0.0",
+    "@opentelemetry/contrib-test-utils": "^0.31.0",
+    "@types/mocha": "^9.1.1",
+    "@types/node": "16.11.21",
+    "@types/sinon": "^10.0.11",
+    "expect": "27.4.2",
     "gts": "3.1.0",
+    "mocha": "7.2.0",
+    "nyc": "15.1.0",
+    "sinon": "13.0.1",
+    "ts-mocha": "10.0.0",
     "typescript": "4.3.5"
   }
 }

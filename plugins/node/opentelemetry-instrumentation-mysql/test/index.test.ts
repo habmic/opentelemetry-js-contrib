@@ -14,9 +14,12 @@
  * limitations under the License.
  */
 
-import { context, trace, SpanStatusCode } from '@opentelemetry/api';
+import { context, Context, trace, SpanStatusCode } from '@opentelemetry/api';
 import { AsyncHooksContextManager } from '@opentelemetry/context-async-hooks';
-import { SemanticAttributes } from '@opentelemetry/semantic-conventions';
+import {
+  DbSystemValues,
+  SemanticAttributes,
+} from '@opentelemetry/semantic-conventions';
 import * as testUtils from '@opentelemetry/contrib-test-utils';
 import {
   BasicTracerProvider,
@@ -26,6 +29,7 @@ import {
 } from '@opentelemetry/sdk-trace-base';
 import * as assert from 'assert';
 import { MySQLInstrumentation } from '../src';
+import * as sinon from 'sinon';
 
 const port = Number(process.env.MYSQL_PORT) || 33306;
 const database = process.env.MYSQL_DATABASE || 'test_db';
@@ -205,6 +209,28 @@ describe('mysql@2.x', () => {
       });
     });
 
+    it('should intercept connection.query(text: options, values: [])', done => {
+      const span = provider.getTracer('default').startSpan('test span');
+      context.with(trace.setSpan(context.active(), span), () => {
+        const sql = 'SELECT 1+? as solution';
+        let rows = 0;
+        const query = connection.query(sql, [1]);
+
+        query.on('result', row => {
+          assert.strictEqual(row.solution, 2);
+          rows += 1;
+        });
+
+        query.on('end', () => {
+          assert.strictEqual(rows, 1);
+          const spans = memoryExporter.getFinishedSpans();
+          assert.strictEqual(spans.length, 1);
+          assertSpan(spans[0], sql, [1]);
+          done();
+        });
+      });
+    });
+
     it('should intercept connection.query(text: options, values: [], callback)', done => {
       const span = provider.getTracer('default').startSpan('test span');
       context.with(trace.setSpan(context.active(), span), () => {
@@ -263,6 +289,70 @@ describe('mysql@2.x', () => {
           assert.strictEqual(spans.length, 1);
           assertSpan(spans[0], sql, undefined, err!.message);
           done();
+        });
+      });
+    });
+
+    describe('active span context', () => {
+      afterEach(() => {
+        sinon.restore();
+      });
+
+      function assertParent(parentContext: Context) {
+        const anyConn = connection as any;
+        const originalImplyConnect = anyConn._implyConnect.bind(connection);
+        return sinon.stub(anyConn, '_implyConnect').callsFake(() => {
+          const activeSpan = trace.getSpan(
+            context.active()
+          ) as unknown as ReadableSpan;
+          const parentSpanContext = trace.getSpanContext(parentContext);
+          assert.strictEqual(
+            activeSpan.spanContext().traceId,
+            parentSpanContext?.traceId
+          );
+          assert.strictEqual(
+            activeSpan.parentSpanId,
+            parentSpanContext?.spanId
+          );
+          assert.notStrictEqual(
+            activeSpan.spanContext().spanId,
+            parentSpanContext?.spanId
+          );
+          originalImplyConnect();
+        });
+      }
+
+      it('should have proper context active for connection.query(text: string)', done => {
+        const span = provider.getTracer('default').startSpan('test span');
+        context.with(trace.setSpan(context.active(), span), () => {
+          const parentContext = context.active();
+          const stub = assertParent(parentContext);
+
+          const query = connection.query('select 1');
+
+          query.on('result', () => {
+            assert.strictEqual(context.active(), parentContext);
+          });
+
+          query.on('end', () => {
+            assert.strictEqual(context.active(), parentContext);
+            sinon.assert.called(stub);
+            done();
+          });
+        });
+      });
+
+      it('should have proper context active for connection.query(text: string, callback)', done => {
+        const span = provider.getTracer('default').startSpan('test span');
+        context.with(trace.setSpan(context.active(), span), () => {
+          const parentContext = context.active();
+          const stub = assertParent(parentContext);
+
+          connection.query('select 1', () => {
+            sinon.assert.called(stub);
+            assert.strictEqual(context.active(), parentContext);
+            done();
+          });
         });
       });
     });
@@ -357,6 +447,28 @@ describe('mysql@2.x', () => {
           assert.ifError(err);
           assert.ok(res);
           assert.strictEqual(res[0].solution, 2);
+          const spans = memoryExporter.getFinishedSpans();
+          assert.strictEqual(spans.length, 1);
+          assertSpan(spans[0], sql, [1]);
+          done();
+        });
+      });
+    });
+
+    it('should intercept pool.query(text: options, values: [])', done => {
+      const span = provider.getTracer('default').startSpan('test span');
+      context.with(trace.setSpan(context.active(), span), () => {
+        const sql = 'SELECT 1+? as solution';
+        let rows = 0;
+        const query = pool.query(sql, [1]);
+
+        query.on('result', row => {
+          assert.strictEqual(row.solution, 2);
+          rows += 1;
+        });
+
+        query.on('end', () => {
+          assert.strictEqual(rows, 1);
           const spans = memoryExporter.getFinishedSpans();
           assert.strictEqual(spans.length, 1);
           assertSpan(spans[0], sql, [1]);
@@ -511,6 +623,31 @@ describe('mysql@2.x', () => {
       });
     });
 
+    it('should intercept poolClusterConnection.query(text: options, values: [])', done => {
+      poolCluster.getConnection((err, poolClusterConnection) => {
+        assert.ifError(err);
+        const span = provider.getTracer('default').startSpan('test span');
+        context.with(trace.setSpan(context.active(), span), () => {
+          const sql = 'SELECT 1+? as solution';
+          const query = poolClusterConnection.query(sql, [1]);
+          let rows = 0;
+
+          query.on('result', row => {
+            assert.strictEqual(row.solution, 2);
+            rows += 1;
+          });
+
+          query.on('end', () => {
+            assert.strictEqual(rows, 1);
+            const spans = memoryExporter.getFinishedSpans();
+            assert.strictEqual(spans.length, 1);
+            assertSpan(spans[0], sql, [1]);
+            done();
+          });
+        });
+      });
+    });
+
     it('should intercept poolClusterConnection.query(text: options, values: [], callback)', done => {
       poolCluster.getConnection((err, poolClusterConnection) => {
         assert.ifError(err);
@@ -647,7 +784,10 @@ function assertSpan(
   values?: any,
   errorMessage?: string
 ) {
-  assert.strictEqual(span.attributes[SemanticAttributes.DB_SYSTEM], 'mysql');
+  assert.strictEqual(
+    span.attributes[SemanticAttributes.DB_SYSTEM],
+    DbSystemValues.MYSQL
+  );
   assert.strictEqual(span.attributes[SemanticAttributes.DB_NAME], database);
   assert.strictEqual(span.attributes[SemanticAttributes.NET_PEER_PORT], port);
   assert.strictEqual(span.attributes[SemanticAttributes.NET_PEER_NAME], host);

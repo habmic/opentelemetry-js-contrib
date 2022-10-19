@@ -62,7 +62,7 @@ export class FastifyInstrumentation extends InstrumentationBase {
     return [
       new InstrumentationNodeModuleDefinition<any>(
         'fastify',
-        ['^3.0.0'],
+        ['^3.0.0', '^4.0.0'],
         (moduleExports, moduleVersion) => {
           this._diag.debug(`Applying patch for fastify@${moduleVersion}`);
           return this._patchConstructor(moduleExports);
@@ -87,7 +87,7 @@ export class FastifyInstrumentation extends InstrumentationBase {
       const routeName = request.routerPath;
       if (routeName && rpcMetadata?.type === RPCType.HTTP) {
         rpcMetadata.span.setAttribute(SemanticAttributes.HTTP_ROUTE, routeName);
-        rpcMetadata.span.updateName(`${request.method} ${routeName || '/'}`);
+        rpcMetadata.span.updateName(`${request.method} ${routeName}`);
       }
       done();
     };
@@ -96,11 +96,13 @@ export class FastifyInstrumentation extends InstrumentationBase {
   private _wrapHandler(
     pluginName: string,
     hookName: string,
-    original: (...args: unknown[]) => Promise<any> | void,
+    original: (...args: unknown[]) => Promise<unknown>,
     syncFunctionWithDone: boolean
-  ): () => Promise<any> | void {
+  ): () => Promise<unknown> {
     const instrumentation = this;
-    return function (this: any, ...args: unknown[]): Promise<any> | void {
+    this._diag.debug('Patching fastify route.handler function');
+
+    return function (this: any, ...args: unknown[]): Promise<unknown> {
       if (!instrumentation.isEnabled()) {
         return original.apply(this, args);
       }
@@ -135,7 +137,7 @@ export class FastifyInstrumentation extends InstrumentationBase {
             return original.apply(this, args);
           },
           err => {
-            if (err) {
+            if (err instanceof Error) {
               span.setStatus({
                 code: SpanStatusCode.ERROR,
                 message: err.message,
@@ -156,6 +158,8 @@ export class FastifyInstrumentation extends InstrumentationBase {
     original: FastifyInstance['addHook']
   ) => () => FastifyInstance {
     const instrumentation = this;
+    this._diag.debug('Patching fastify server.addHook function');
+
     return function (
       original: FastifyInstance['addHook']
     ): () => FastifyInstance {
@@ -188,6 +192,7 @@ export class FastifyInstrumentation extends InstrumentationBase {
     original: () => FastifyInstance
   ): () => FastifyInstance {
     const instrumentation = this;
+    this._diag.debug('Patching fastify constructor function');
 
     function fastify(this: FastifyInstance, ...args: any) {
       const app: FastifyInstance = original.apply(this, args);
@@ -206,6 +211,8 @@ export class FastifyInstrumentation extends InstrumentationBase {
 
   public _patchSend() {
     const instrumentation = this;
+    this._diag.debug('Patching fastify reply.send function');
+
     return function patchSend(
       original: () => FastifyReply
     ): () => FastifyReply {
@@ -233,6 +240,8 @@ export class FastifyInstrumentation extends InstrumentationBase {
 
   public _hookPreHandler() {
     const instrumentation = this;
+    this._diag.debug('Patching fastify preHandler function');
+
     return function preHandler(
       this: any,
       request: FastifyRequest,
